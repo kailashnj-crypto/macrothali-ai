@@ -1,0 +1,85 @@
+name: Build MacroThali AI Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-android-apk:
+    name: Compile Debug APK via Capacitor
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Verify Web Assets Directory (www/index.html)
+        run: |
+          mkdir -p www
+          if [ ! -f www/index.html ] && [ -f index.html ]; then
+            cp index.html www/index.html
+          fi
+          ls -la www/
+
+      - name: Install NPM Dependencies
+        run: npm install
+
+      - name: Add & Sync Capacitor Android Platform
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Inject Camera & Storage Permissions into AndroidManifest.xml
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          python3 - << 'EOF'
+          import pathlib
+          manifest_path = pathlib.Path("android/app/src/main/AndroidManifest.xml")
+          content = manifest_path.read_text(encoding="utf-8")
+          permissions = [
+              '<uses-permission android:name="android.permission.CAMERA" />',
+              '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />',
+              '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />',
+              '<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />',
+              '<uses-feature android:name="android.hardware.camera" android:required="false" />'
+          ]
+          inject_block = "\n    ".join([p for p in permissions if p not in content])
+          if inject_block:
+              content = content.replace("</manifest>", f"    {inject_block}\n</manifest>")
+              manifest_path.write_text(content, encoding="utf-8")
+          print("Updated AndroidManifest.xml successfully.")
+          EOF
+          cat "$MANIFEST"
+
+      - name: Build Debug APK with Gradle
+        working-directory: ./android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload Compiled APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacroThali-AI-Debug-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
