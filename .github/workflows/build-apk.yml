@@ -7,35 +7,83 @@ on:
       - master
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-android-apk:
     name: Compile Debug APK via Capacitor
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - name: Set up JDK 21 (setup-java v5)
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Verify Web Assets Directory (www/index.html)
+      - name: Normalize Project Structure & Verify www/index.html
         run: |
-          mkdir -p www
-          if [ ! -f www/index.html ] && [ -f index.html ]; then
-            cp index.html www/index.html
+          # If the user uploaded the zip file directly, extract it
+          if [ -f "MacroThali_AI_Android_Project.zip" ]; then
+            unzip -o MacroThali_AI_Android_Project.zip
           fi
+          # If files were uploaded inside a subfolder, move them to root
+          if [ ! -f "package.json" ]; then
+            FOUND_PKG=$(find . -maxdepth 3 -name "package.json" | head -n 1)
+            if [ -n "$FOUND_PKG" ]; then
+              SUBDIR=$(dirname "$FOUND_PKG")
+              cp -r "$SUBDIR"/* .
+            fi
+          fi
+          mkdir -p www
+          if [ ! -f "www/index.html" ]; then
+            FOUND_HTML=$(find . -maxdepth 3 -name "index.html" | head -n 1)
+            if [ -n "$FOUND_HTML" ]; then
+              cp "$FOUND_HTML" www/index.html
+            fi
+          fi
+          # Ensure package.json exists even if not uploaded
+          if [ ! -f "package.json" ]; then
+            cat << 'EOF' > package.json
+          {
+            "name": "macrothali-ai",
+            "version": "1.0.0",
+            "description": "MacroThali AI",
+            "main": "www/index.html",
+            "dependencies": {
+              "@capacitor/android": "^6.0.0",
+              "@capacitor/core": "^6.0.0"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^6.0.0"
+            }
+          }
+          EOF
+          fi
+          # Ensure capacitor.config.json exists
+          if [ ! -f "capacitor.config.json" ]; then
+            cat << 'EOF' > capacitor.config.json
+          {
+            "appId": "com.kailash.macrotracker",
+            "appName": "MacroThali AI",
+            "webDir": "www",
+            "bundledWebRuntime": false,
+            "server": {
+              "androidScheme": "https"
+            }
+          }
+          EOF
+          fi
+          ls -la
           ls -la www/
 
       - name: Install NPM Dependencies
@@ -50,25 +98,23 @@ jobs:
 
       - name: Inject Camera & Storage Permissions into AndroidManifest.xml
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          python3 - << 'EOF'
+          python3 -c '
           import pathlib
           manifest_path = pathlib.Path("android/app/src/main/AndroidManifest.xml")
           content = manifest_path.read_text(encoding="utf-8")
           permissions = [
-              '<uses-permission android:name="android.permission.CAMERA" />',
-              '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />',
-              '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />',
-              '<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />',
-              '<uses-feature android:name="android.hardware.camera" android:required="false" />'
+              "<uses-permission android:name=\"android.permission.CAMERA\" />",
+              "<uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" />",
+              "<uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" />",
+              "<uses-permission android:name=\"android.permission.READ_MEDIA_IMAGES\" />",
+              "<uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />"
           ]
           inject_block = "\n    ".join([p for p in permissions if p not in content])
           if inject_block:
               content = content.replace("</manifest>", f"    {inject_block}\n</manifest>")
               manifest_path.write_text(content, encoding="utf-8")
-          print("Updated AndroidManifest.xml successfully.")
-          EOF
-          cat "$MANIFEST"
+          print("Permissions injected into AndroidManifest.xml successfully.")
+          '
 
       - name: Build Debug APK with Gradle
         working-directory: ./android
@@ -82,4 +128,3 @@ jobs:
           name: MacroThali-AI-Debug-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-
