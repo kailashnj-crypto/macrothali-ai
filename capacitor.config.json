@@ -1,0 +1,9 @@
+{
+  "appId": "com.kailash.macrotracker",
+  "appName": "MacroThali AI",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}
